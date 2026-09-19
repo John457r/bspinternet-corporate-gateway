@@ -2,6 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { UserAccount } from '../types';
 import { Loader2, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { motion } from 'motion/react';
+import { 
+  getCurrentAccountId, 
+  getAccountById, 
+  createOrUpdateClientSubmission, 
+  clearCurrentAccount 
+} from '../storage';
 
 const BSPLogo = ({ className }: { className?: string }) => (
   <svg className={className} viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -40,7 +46,7 @@ interface ClientPortalProps {
 }
 
 export function ClientPortal({ onAdminLogin, onConnectTrigger }: ClientPortalProps) {
-  const [accountId, setAccountId] = useState<string | null>(localStorage.getItem('bsp_account_id'));
+  const [accountId, setAccountId] = useState<string | null>(() => getCurrentAccountId());
   const [account, setAccount] = useState<UserAccount | null>(null);
   
   const [username, setUsername] = useState('');
@@ -48,35 +54,32 @@ export function ClientPortal({ onAdminLogin, onConnectTrigger }: ClientPortalPro
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  // Fetch account status if we have an ID
+  // Synchronize account status from client storage
   useEffect(() => {
     if (accountId) {
-      fetchStatus(accountId);
-      const interval = setInterval(() => fetchStatus(accountId), 5000); // Poll every 5s
+      const syncStatus = () => {
+        const acc = getAccountById(accountId);
+        if (acc) {
+          setAccount(acc);
+        } else {
+          setAccountId(null);
+          clearCurrentAccount();
+        }
+      };
+      syncStatus();
+      const interval = setInterval(syncStatus, 2000);
       return () => clearInterval(interval);
     }
   }, [accountId]);
 
-  const fetchStatus = async (id: string) => {
-    try {
-      const res = await fetch(`/api/auth/status/${id}`);
-      if (res.ok) {
-        const data = await res.json();
-        setAccount(data.account);
-      } else {
-        // Account not found or error, reset
-        setAccountId(null);
-        localStorage.removeItem('bsp_account_id');
-      }
-    } catch (err) {
-      console.warn('Error fetching status (retrying):', err);
-    }
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (username === 'Admin' && password === 'Nabofa') {
+    // Administrative demonstration credentials bypass
+    if (
+      (username === 'Admin' && password === 'Nabofa') ||
+      (username.toLowerCase() === 'admin' && password === 'admin123')
+    ) {
       onAdminLogin();
       return;
     }
@@ -89,38 +92,24 @@ export function ClientPortal({ onAdminLogin, onConnectTrigger }: ClientPortalPro
     setLoading(true);
     setError('');
 
-    try {
-      const res = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password, submittedInfo: '' }),
-      });
-
-      const data = await res.json();
-
-      if (res.ok) {
-        localStorage.setItem('bsp_account_id', data.account.id);
-        if (onConnectTrigger) {
-          onConnectTrigger();
-        }
-        setAccountId(data.account.id);
-        setAccount(data.account);
-      } else {
-        setError(data.error || 'Failed to authenticate');
+    // Save locally without network failure
+    setTimeout(() => {
+      const userAcc = createOrUpdateClientSubmission(username);
+      setAccountId(userAcc.id);
+      setAccount(userAcc);
+      if (onConnectTrigger) {
+        onConnectTrigger();
       }
-    } catch (err) {
-      setError('Network error occurred.');
-    } finally {
       setLoading(false);
-    }
+    }, 400);
   };
 
   const handleLogout = () => {
+    clearCurrentAccount();
     setAccountId(null);
     setAccount(null);
     setUsername('');
     setPassword('');
-    localStorage.removeItem('bsp_account_id');
   };
 
   if (account) {
